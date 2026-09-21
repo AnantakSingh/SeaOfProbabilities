@@ -2,6 +2,8 @@
 
 An interactive field of dice rolling on a wave of probability. Move the cursor and click for the sea to respond. Everything is rendered live with [three.js](https://threejs.org/), and all the sound is synthesized in the browser with the Web Audio API — there are no audio files.
 
+![Sea of Probabilities](social-preview.png)
+
 **Live:** https://anantaksingh.github.io/SeaOfProbabilities/
 
 ## Controls
@@ -10,8 +12,6 @@ An interactive field of dice rolling on a wave of probability. Move the cursor a
 | --- | --- |
 | Move the cursor | Dice ripple and spin under it, with a synth pluck that rises left to right |
 | Click | An expanding ring lifts and spins the dice, with a kick, a pad swell and a noise sweep |
-| Drag | Orbit the camera |
-| Scroll | Zoom |
 | Speaker button | Sound on / off |
 
 Leave it alone for a few seconds and it plays by itself.
@@ -25,6 +25,10 @@ python -m http.server 5178
 ```
 
 Then open http://localhost:5178. three.js loads from a CDN, so you need an internet connection.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Notes
 

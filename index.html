@@ -149,7 +149,7 @@ const DEFAULTS = {
   metalness: 1,
   clearcoat: 0.09,
   clearcoatRough: 0.29,
-  lockCamera: false,
+  lockCamera: true,
   intro: true,           // dice rain in on load
   introHeight: 35,
   introSpread: 2.5,      // seconds over which the dice arrive
@@ -260,7 +260,7 @@ controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI / 2 - 0.03;
 controls.minDistance = 10;
 controls.maxDistance = 260;
-controls.enabled = !params.lockCamera;
+controls.enabled = false;   // deploy build: fixed camera, no orbit / pan / zoom
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
