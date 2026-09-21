@@ -1,6 +1,6 @@
 # Sea of Probabilities
 
-An interactive field of dice rolling on a wave of probability. Move the cursor to send ripples through it, click to make a splash, and watch the dice settle into a phrase. Everything is rendered live with [three.js](https://threejs.org/), and all the sound is synthesized in the browser with the Web Audio API — there are no audio files.
+An interactive field of dice rolling on a wave of probability. Move the cursor and click for the sea to respond. Everything is rendered live with [three.js](https://threejs.org/), and all the sound is synthesized in the browser with the Web Audio API — there are no audio files.
 
 **Live:** https://anantaksingh.github.io/SeaOfProbabilities/
 
