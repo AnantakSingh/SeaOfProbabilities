@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sea of Probabilities</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tomorrow:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #17171d;
+    --muted: #7d7d88;
+    --red: #c73535;
+    --hairline: rgba(23, 23, 29, 0.14);
+    --font-display: 'Tomorrow', 'Segoe UI', sans-serif;
+    --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    overflow: hidden;
+    font-family: var(--font-display);
+  }
+  #scene { position: fixed; inset: 0; display: block; }
+  .hud { position: fixed; z-index: 2; pointer-events: none; }
+  #brand { top: 22px; left: 26px; }
+  #brand .word { font-weight: 600; font-size: 15px; letter-spacing: 0.34em; color: var(--ink); }
+  #brand .word em { color: var(--red); font-style: normal; }
+  #sound {
+    position: fixed; z-index: 5; bottom: 20px; left: 26px;
+    width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink); background: transparent;
+    border: 1px solid var(--hairline); padding: 0; opacity: 0.6;
+    transition: border-color 0.2s ease, opacity 0.2s ease;
+  }
+  #sound svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  #sound .waves { opacity: 0; transition: opacity 0.2s ease; }
+  #sound.on { opacity: 1; }
+  #sound.on .waves { opacity: 1; }
+  #sound:hover { border-color: var(--ink); opacity: 1; }
+  #sound:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  #loading {
+    position: fixed; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--muted);
+    font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase;
+    transition: opacity 0.5s ease;
+  }
+  #loading.done { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+
+<div class="hud" id="brand">
+  <div class="word">SEA OF PROBABILITIES<em>.</em></div>
+</div>
+
+<button id="sound" type="button" title="sound on / off" aria-label="toggle sound" aria-pressed="false">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z"></path>
+    <path class="waves" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"></path>
+  </svg>
+</button>
+
+<div id="loading">rolling the dice</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const isSmall = Math.min(window.innerWidth, window.innerHeight) < 700;
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TWO_PI = Math.PI * 2;
+const HALF_PI = Math.PI / 2;
+
+// ---------- parameters (everything the panel controls) ----------
+const DEFAULTS = {
+  phrase: 'INFINITE POSSIBILITIES',
+  textRows: 6,           // letter height in dice rows (shrinks automatically to fit)
+  textPos: 0.38,         // 0 = far edge, 1 = near edge
+  cols: isSmall ? 60 : 116,
+  rows: isSmall ? 44 : 100,
+  spacing: 1.2,
+  bevel: 0.18,
+  redAce: false,
+  waveSpeed: 0.11,
+  waveAmp: 7,
+  waveScale: 0.018,
+  horizonR: 1010,        // smaller = stronger curve toward the horizon
+  pulseRadius: 8,
+  pulseStrength: 6,
+  springK: 5,
+  springC: 2,
+  activateAt: 0.1,       // how strong the ripple must be to lock a die onto the phrase
+  fogNear: 24,
+  fogFar: 95,
+  shadows: true,
+  splashRadius: 44,
+  splashHeight: 10,
+  splashSpin: 20,
+  ringSpeed: 10,
+  glowStrength: 4,
+  glowSense: 0.03,
+  glowFade: 8,
+  glowColorA: '#0080ff',
+  glowColorB: '#ff0066',
+  bgColor: '#242424',
+  diceColor: '#000000',
+  sunIntensity: 4,
+  sunColor: '#ffffff',
+  sunAzimuth: 197,
+  sunElevation: 34,
+  hemiIntensity: 2,
+  envIntensity: 2,
+  exposure: 0.52,
+  roughness: 0.71,
+  metalness: 1,
+  clearcoat: 0.09,
+  clearcoatRough: 0.29,
+  lockCamera: false,
+  intro: true,           // dice rain in on load
+  introHeight: 35,
+  introSpread: 2.5,      // seconds over which the dice arrive
+  idle: true,            // autonomous splashes when nobody is interacting
+  idleAfter: 4,
+  idleEvery: 4,
+  idleStrength: 0.6,
+  postFx: true,
+  bloom: true,
+  bloomStrength: 0.6,
+  bloomThreshold: 1,
+  bloomRadius: 0.4,
+  vignette: 0.45,
+  sound: true,           // remembered preference; still needs a first click (autoplay policy)
+  soundVolume: 1,
+  sndRoot: 'D',
+  sndScale: 'natural minor',
+  bpm: 99,              // the echo and the pad gate lock to this
+  hoverVol: 0.17, hoverOctave: 2, hoverDecay: 0.5, pluckBright: 20, pluckReso: 2,
+  thumpVol: 1.5, thumpHz: 32, thumpDecay: 1.1, sweepVol: 0.095,
+  swellVol: 1.25, swellAttack: 1.5, swellChord: 'diatonic 7th', swellCutoff: 4070, padReso: 4.5, padDetune: 12,
+  gateDiv: '1/16', gateDepth: 0.15, wobbleRate: 0.1, wobbleDepth: 110, swellLength: 0.75,
+  landVol: 0.26,
+  ambientVol: 0.07, ambientCutoff: 240,
+  warmth: 0.85,          // tanh drive on the whole mix
+  reverbMix: 0.4,       // neon-hall reverb send
+  reverbDecay: 2.3,        // seconds
+  echoMix: 0.28,         // dotted-eighth ping-pong echo on plucks and pads
+  echoFeedback: 0.69,
+  ambientTexture: 0.017, // faint bandpassed static over the drone
+  idleCursor: true,      // a virtual cursor wanders the field while idle
+  idleCursorSpeed: 0.12,
+  idleCursorStrength: 0.7,
+};
+const params = { ...DEFAULTS };
+const STORE = 'dice-ocean-params-v2';
+// v2 rebuilt the sound as neon techno: carry v1's visual tuning over, drop its old sound settings
+const V1_SOUND_KEYS = /^(snd|hover|thump|swell|trem|wobble|land|ambient|warmth|reverb)/;
+try {
+  let saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+  if (!saved) {
+    saved = JSON.parse(localStorage.getItem('dice-ocean-params') || '{}');
+    for (const k of Object.keys(saved)) if (V1_SOUND_KEYS.test(k)) delete saved[k];
+  }
+  for (const k of Object.keys(DEFAULTS)) if (k in saved) params[k] = saved[k];
+} catch {}
+function persist() { try { localStorage.setItem(STORE, JSON.stringify(params)); } catch {} }
+
+// ---------- simplex noise (2D) ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const noise2 = (() => {
+  const grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+  const p = new Uint8Array(256);
+  const rand = mulberry32(1337);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) { const j = (rand() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const F2 = 0.5 * (Math.sqrt(3) - 1), G2 = (3 - Math.sqrt(3)) / 6;
+  return function (xin, yin) {
+    let n0 = 0, n1 = 0, n2 = 0;
+    const s = (xin + yin) * F2;
+    const i = Math.floor(xin + s), j = Math.floor(yin + s);
+    const t = (i + j) * G2;
+    const x0 = xin - (i - t), y0 = yin - (j - t);
+    const i1 = x0 > y0 ? 1 : 0, j1 = 1 - i1;
+    const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+    const x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+    const ii = i & 255, jj = j & 255;
+    let t0 = 0.5 - x0 * x0 - y0 * y0;
+    if (t0 > 0) { t0 *= t0; const g = grad[perm[ii + perm[jj]] % 8]; n0 = t0 * t0 * (g[0] * x0 + g[1] * y0); }
+    let t1 = 0.5 - x1 * x1 - y1 * y1;
+    if (t1 > 0) { t1 *= t1; const g = grad[perm[ii + i1 + perm[jj + j1]] % 8]; n1 = t1 * t1 * (g[0] * x1 + g[1] * y1); }
+    let t2 = 0.5 - x2 * x2 - y2 * y2;
+    if (t2 > 0) { t2 *= t2; const g = grad[perm[ii + 1 + perm[jj + 1]] % 8]; n2 = t2 * t2 * (g[0] * x2 + g[1] * y2); }
+    return 70 * (n0 + n1 + n2);
+  };
+})();
+
+// ---------- renderer / scene ----------
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isSmall ? 1.5 : 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = params.shadows;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = params.exposure;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+scene.fog = new THREE.Fog(0xffffff, params.fogNear, params.fogFar);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 600);
+camera.position.set(-23.55, 27.5, 65.72);
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(2.67, -22.52, 6.29);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI / 2 - 0.03;
+controls.minDistance = 10;
+controls.maxDistance = 260;
+controls.enabled = !params.lockCamera;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const hemi = new THREE.HemisphereLight(0xf7f9ff, 0xd9d9e2, params.hemiIntensity);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(params.sunColor, params.sunIntensity);
+function applySun() {
+  const az = params.sunAzimuth * Math.PI / 180;
+  const el = params.sunElevation * Math.PI / 180;
+  const r = 90;
+  sun.position.set(r * Math.cos(el) * Math.sin(az), r * Math.sin(el), r * Math.cos(el) * Math.cos(az));
+  sun.color.set(params.sunColor);
+  sun.intensity = params.sunIntensity;
+}
+applySun();
+
+// ---------- post: threshold bloom (only the neon exceeds it) + soft vignette ----------
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(
+  window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType }));
+composer.setPixelRatio(renderer.getPixelRatio());
+composer.setSize(window.innerWidth, window.innerHeight);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight),
+  params.bloomStrength, params.bloomRadius, params.bloomThreshold);
+bloomPass.enabled = params.bloom;
+const vignettePass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, strength: { value: params.vignette } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float strength; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float d = distance(vUv, vec2(0.5));
+      float v = smoothstep(0.85, 0.3, d);
+      gl_FragColor = vec4(c.rgb * mix(1.0, v, strength), c.a);
+    }`,
+});
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+composer.addPass(vignettePass);
+
+// ---------- sound: synthesized neon techno, opt-in, no assets ----------
+// voices -> master (or pump, the bus a click's kick ducks) -> [dry | neon-hall reverb] -> drive -> glue comp -> volume
+// plucks, pads and sweeps also feed a tempo-synced ping-pong echo that returns into master
+let audio = null;
+function ensureAudio() {
+  if (audio) return audio;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const volume = ctx.createGain(); volume.gain.value = params.soundVolume;
+  const shaper = ctx.createWaveShaper(); shaper.oversample = '4x';
+  const glue = ctx.createDynamicsCompressor();
+  glue.threshold.value = -12; glue.knee.value = 10; glue.ratio.value = 3;
+  glue.attack.value = 0.004; glue.release.value = 0.15;
+  const master = ctx.createGain();            // every voice connects here (the input bus)
+  const pump = ctx.createGain(); pump.connect(master);
+  const dry = ctx.createGain(); dry.gain.value = 1;
+  const reverb = ctx.createConvolver();
+  const wet = ctx.createGain(); wet.gain.value = params.reverbMix;
+  master.connect(dry); dry.connect(shaper);
+  master.connect(reverb); reverb.connect(wet); wet.connect(shaper);
+  shaper.connect(glue); glue.connect(volume); volume.connect(ctx.destination);
+  // ping-pong: left tap, then right tap, darkened on every lap
+  const echo = ctx.createGain();
+  const echoHp = ctx.createBiquadFilter(); echoHp.type = 'highpass'; echoHp.frequency.value = 280;
+  const echoL = ctx.createDelay(2), echoR = ctx.createDelay(2);
+  const echoLp = ctx.createBiquadFilter(); echoLp.type = 'lowpass'; echoLp.frequency.value = 3400;
+  const echoFb = ctx.createGain();
+  const echoMerge = ctx.createChannelMerger(2);
+  const echoWet = ctx.createGain();
+  echo.connect(echoHp); echoHp.connect(echoL);
+  echoL.connect(echoMerge, 0, 0); echoL.connect(echoR);
+  echoR.connect(echoMerge, 0, 1); echoR.connect(echoLp); echoLp.connect(echoFb); echoFb.connect(echoL);
+  echoMerge.connect(echoWet); echoWet.connect(master);
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  audio = { ctx, master, pump, volume, shaper, reverb, wet, echo, echoL, echoR, echoFb, echoWet, noiseBuf, ambient: null };
+  setWarmth(); setReverb(); setEcho();
+  return audio;
+}
+// tanh drive: glues the saws together and adds grit to the kick
+function setWarmth() {
+  if (!audio) return;
+  const n = 1024, curve = new Float32Array(n);
+  const drive = 1 + params.warmth * 4;
+  for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * drive) / Math.tanh(drive); }
+  audio.shaper.curve = curve;
+}
+// synthesized impulse response: long, bright-ish decorrelated noise tail for a wide neon hall
+function setReverb() {
+  if (!audio) return;
+  const { ctx } = audio;
+  const seconds = params.reverbDecay, len = Math.floor(ctx.sampleRate * seconds);
+  const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  const a = 1 - Math.exp(-2 * Math.PI * 4800 / ctx.sampleRate);  // one-pole lowpass ~4.8 kHz
+  for (let ch = 0; ch < 2; ch++) {
+    const d = ir.getChannelData(ch); let y = 0;
+    for (let i = 0; i < len; i++) {
+      const env = Math.pow(1 - i / len, 3);
+      y += a * ((Math.random() * 2 - 1) - y);
+      d[i] = y * env * 2.4;
+    }
+  }
+  audio.reverb.buffer = ir;
+  audio.wet.gain.value = params.reverbMix;
+}
+function setEcho() {
+  if (!audio) return;
+  const t = audio.ctx.currentTime, time = 0.75 * 60 / params.bpm;  // dotted eighth
+  audio.echoL.delayTime.setTargetAtTime(time, t, 0.05);
+  audio.echoR.delayTime.setTargetAtTime(time, t, 0.05);
+  audio.echoFb.gain.value = params.echoFeedback;
+  audio.echoWet.gain.value = params.echoMix;
+}
+function panner(ctx, v) {
+  if (!ctx.createStereoPanner) return ctx.createGain();
+  const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, v)); return p;
+}
+function osc(ctx, type, hz, detune = 0) {
+  const o = ctx.createOscillator(); o.type = type; o.frequency.value = hz; o.detune.value = detune; return o;
+}
+function startAmbient() {
+  const a = ensureAudio();
+  if (a.ambient) return;
+  const { ctx, master, pump } = a;
+  const now = ctx.currentTime;
+  const fadeP = ctx.createGain(), fadeM = ctx.createGain();
+  for (const f of [fadeP, fadeM]) { f.gain.setValueAtTime(0, now); f.gain.linearRampToValueAtTime(1, now + 2.5); }
+  fadeP.connect(pump); fadeM.connect(master);
+  // drone: detuned saws + sine sub on the root, a saw fifth above, through a drifting resonant lowpass
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = params.ambientCutoff; lp.Q.value = 4;
+  const g = ctx.createGain(); g.gain.value = params.ambientVol;
+  const o1 = osc(ctx, 'sawtooth', rootHz() / 2, -9);
+  const o2 = osc(ctx, 'sawtooth', rootHz() / 2, 9);
+  const o3 = osc(ctx, 'sine', rootHz() / 2);
+  const o4 = osc(ctx, 'sawtooth', rootHz() * 0.75, 4);
+  const g3 = ctx.createGain(); g3.gain.value = 0.8;
+  const g4 = ctx.createGain(); g4.gain.value = 0.35;
+  const lfo = osc(ctx, 'sine', 0.07);
+  const lfoG = ctx.createGain(); lfoG.gain.value = params.ambientCutoff * 0.6;
+  lfo.connect(lfoG); lfoG.connect(lp.frequency);
+  o1.connect(lp); o2.connect(lp); o3.connect(g3); g3.connect(lp); o4.connect(g4); g4.connect(lp);
+  lp.connect(g); g.connect(fadeP);
+  // static: looping noise through a bandpass, swelling slowly, like a sign buzzing across the water
+  const tex = ctx.createBufferSource(); tex.buffer = a.noiseBuf; tex.loop = true;
+  const texBp = ctx.createBiquadFilter(); texBp.type = 'bandpass'; texBp.frequency.value = 3200; texBp.Q.value = 0.7;
+  const texG = ctx.createGain(); texG.gain.value = params.ambientTexture;
+  const texLfo = osc(ctx, 'sine', 0.05);
+  const texLfoG = ctx.createGain(); texLfoG.gain.value = params.ambientTexture * 0.6;
+  texLfo.connect(texLfoG); texLfoG.connect(texG.gain);
+  tex.connect(texBp); texBp.connect(texG); texG.connect(fadeM);
+  [o1, o2, o3, o4, lfo, tex, texLfo].forEach(n => n.start());
+  a.ambient = {
+    g, lp, lfoG, o1, o2, o3, o4, texG, texLfoG,
+    stop() {
+      const t = ctx.currentTime;
+      for (const f of [fadeP, fadeM]) { f.gain.cancelScheduledValues(t); f.gain.setValueAtTime(f.gain.value, t); f.gain.linearRampToValueAtTime(0, t + 0.8); }
+      setTimeout(() => { [o1, o2, o3, o4, lfo, tex, texLfo].forEach(n => n.stop()); fadeP.disconnect(); fadeM.disconnect(); }, 900);
+    },
+  };
+}
+function retuneAmbient() {
+  const am = audio?.ambient; if (!am) return;
+  const t = audio.ctx.currentTime;
+  am.g.gain.linearRampToValueAtTime(params.ambientVol, t + 0.3);
+  am.lp.frequency.linearRampToValueAtTime(params.ambientCutoff, t + 0.3);
+  am.lfoG.gain.value = params.ambientCutoff * 0.6;
+  am.o1.frequency.linearRampToValueAtTime(rootHz() / 2, t + 0.3);
+  am.o2.frequency.linearRampToValueAtTime(rootHz() / 2, t + 0.3);
+  am.o3.frequency.linearRampToValueAtTime(rootHz() / 2, t + 0.3);
+  am.o4.frequency.linearRampToValueAtTime(rootHz() * 0.75, t + 0.3);
+  am.texG.gain.linearRampToValueAtTime(params.ambientTexture, t + 0.3);
+  am.texLfoG.gain.value = params.ambientTexture * 0.6;
+}
+function stopAmbient() {
+  if (audio?.ambient) { audio.ambient.stop(); audio.ambient = null; }
+}
+// every sound the sea makes sits in one key + scale (both tunable)
+const ROOTS = { 'A': 0, 'Bb': 1, 'B': 2, 'C': 3, 'C#': 4, 'D': 5, 'Eb': 6, 'E': 7, 'F': 8, 'F#': 9, 'G': 10, 'G#': 11 };
+const SCALES = {
+  'natural minor': [0, 2, 3, 5, 7, 8, 10],
+  'dorian': [0, 2, 3, 5, 7, 9, 10],
+  'harmonic minor': [0, 2, 3, 5, 7, 8, 11],
+  'minor pentatonic': [0, 3, 5, 7, 10],
+  'lydian': [0, 2, 4, 6, 7, 9, 11],
+};
+// diatonic shapes stack thirds inside the scale; the rest are fixed intervals on the degree's root
+const CHORDS = {
+  'diatonic 7th': null,
+  'diatonic 9th': null,
+  'minor 7': [0, 3, 7, 10],
+  'minor 9': [0, 3, 7, 10, 14],
+  'sus2': [0, 2, 7, 12],
+  'power (1-5-8)': [0, 7, 12],
+  'open (1-5-8-12)': [0, 7, 12, 19],
+};
+const GATES = { 'off': 0, '1/8': 2, '1/16': 4, '1/32': 8 };
+const PROGRESSION = [0, 5, 3, 6];   // i – VI – iv – VII: each click swell picks one of these
+if (!(params.sndScale in SCALES)) params.sndScale = DEFAULTS.sndScale;
+if (!(params.swellChord in CHORDS)) params.swellChord = DEFAULTS.swellChord;
+if (!(params.gateDiv in GATES)) params.gateDiv = DEFAULTS.gateDiv;
+const rootHz = () => 110 * Math.pow(2, (ROOTS[params.sndRoot] || 0) / 12); // A2 = 110
+function noteHz(step, octave = 0) {
+  const sc = SCALES[params.sndScale] || SCALES['natural minor'];
+  const o = Math.floor(step / sc.length);
+  const d = ((step % sc.length) + sc.length) % sc.length;
+  return rootHz() * Math.pow(2, octave + o + sc[d] / 12);
+}
+const currentDegree = () => PROGRESSION[(Math.random() * PROGRESSION.length) | 0];
+function chordHz(degree) {
+  const shape = CHORDS[params.swellChord];
+  if (params.swellChord === 'diatonic 9th') return [0, 2, 4, 6, 8].map(k => noteHz(degree + k));
+  if (!shape) return [0, 2, 4, 6].map(k => noteHz(degree + k));
+  const root = noteHz(degree);
+  return shape.map(semi => root * Math.pow(2, semi / 12));
+}
+// neon pluck: two detuned saws + square sub through a resonant lowpass that snaps shut
+function pluck(hz, vol = 0.05, decay = 0.4, pan = 0) {
+  const { ctx, master, echo } = audio;
+  const t = ctx.currentTime;
+  const mix = ctx.createGain(); mix.gain.value = 0.5;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = params.pluckReso;
+  lp.frequency.setValueAtTime(Math.min(16000, hz * params.pluckBright), t);
+  lp.frequency.exponentialRampToValueAtTime(Math.max(120, hz * 1.1), t + decay * 0.7);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  const p = panner(ctx, pan);
+  const oscs = [osc(ctx, 'sawtooth', hz, -10), osc(ctx, 'sawtooth', hz, 10)];
+  const sub = osc(ctx, 'square', hz / 2); const subG = ctx.createGain(); subG.gain.value = 0.35;
+  oscs.forEach(o => o.connect(mix)); sub.connect(subG); subG.connect(mix);
+  mix.connect(lp); lp.connect(g); g.connect(p); p.connect(master); p.connect(echo);
+  [...oscs, sub].forEach(o => { o.start(t); o.stop(t + decay + 0.05); });
+}
+// kick: sine with a fast two-stage pitch drop plus a few ms of bright noise for the beater
+function kick(t, vol = 0.4, hz = 48, decay = 0.35, dest = audio.master) {
+  const { ctx, noiseBuf } = audio;
+  const o = osc(ctx, 'sine', hz * 5);
+  o.frequency.setValueAtTime(hz * 5, t);
+  o.frequency.exponentialRampToValueAtTime(hz * 1.6, t + 0.03);
+  o.frequency.exponentialRampToValueAtTime(hz, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  o.connect(g); g.connect(dest);
+  o.start(t); o.stop(t + decay + 0.05);
+  const c = ctx.createBufferSource(); c.buffer = noiseBuf;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
+  const cg = ctx.createGain();
+  cg.gain.setValueAtTime(vol * 0.25, t);
+  cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.018);
+  c.connect(hp); hp.connect(cg); cg.connect(dest);
+  c.start(t, Math.random() * 0.5, 0.03);
+}
+// sidechain: a click's kick dips the drone and pads, which recover over a fraction of a beat
+function duck(t, amount) {
+  const p = audio.pump.gain;
+  p.setTargetAtTime(1 - amount, t, 0.004);
+  p.setTargetAtTime(1, t + 0.03, (60 / params.bpm) * 0.18);
+}
+// landing zap: a square blip that drops in pitch through a bandpass, like digital rain
+function zap(vol, hz) {
+  const { ctx, master } = audio;
+  const t = ctx.currentTime;
+  const o = osc(ctx, 'square', hz * 4);
+  o.frequency.setValueAtTime(hz * 4, t);
+  o.frequency.exponentialRampToValueAtTime(hz, t + 0.04);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = hz * 2; bp.Q.value = 3;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  const p = panner(ctx, (Math.random() - 0.5) * 1.2);
+  o.connect(bp); bp.connect(g); g.connect(p); p.connect(master);
+  o.start(t); o.stop(t + 0.12);
+}
+// sweep: bandpassed noise that opens with the ring and closes as it fades
+function sweep(vol, seconds) {
+  const { ctx, master, echo, noiseBuf } = audio;
+  const t = ctx.currentTime;
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 4;
+  bp.frequency.setValueAtTime(300, t);
+  bp.frequency.exponentialRampToValueAtTime(5000, t + seconds * 0.5);
+  bp.frequency.exponentialRampToValueAtTime(800, t + seconds);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + seconds * 0.4);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  s.connect(bp); bp.connect(g); g.connect(master); g.connect(echo);
+  s.start(t); s.stop(t + seconds + 0.05);
+}
+// swell: a supersaw chord on the bar's degree, filter opening and closing, trance-gated on the grid
+function swell(vol = 1, seconds = 4) {
+  const { ctx, pump, echo } = audio;
+  const t = ctx.currentTime;
+  const chord = chordHz(currentDegree());
+  const attack = Math.min(params.swellAttack, seconds * 0.5);
+  const hold = Math.max(attack + 0.1, seconds * 0.35);
+  const floor = 160, open = Math.max(floor + 1, params.swellCutoff);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = params.padReso;
+  lp.frequency.setValueAtTime(floor, t);
+  lp.frequency.exponentialRampToValueAtTime(open, t + attack);
+  lp.frequency.setValueAtTime(open, t + hold);
+  lp.frequency.exponentialRampToValueAtTime(floor, t + seconds);
+  const wob = osc(ctx, 'sine', params.wobbleRate);   // slow filter wobble
+  const wobG = ctx.createGain(); wobG.gain.value = params.wobbleDepth;
+  wob.connect(wobG); wobG.connect(lp.frequency);
+  // gate: a smoothed square LFO at the tempo
+  const rate = (params.bpm / 60) * (GATES[params.gateDiv] || 0);
+  const depth = rate ? params.gateDepth : 0;
+  const amp = ctx.createGain(); amp.gain.value = 1 - depth / 2;
+  const gate = osc(ctx, 'square', rate || 1);
+  const gateLp = ctx.createBiquadFilter(); gateLp.type = 'lowpass'; gateLp.frequency.value = 90;
+  const gateG = ctx.createGain(); gateG.gain.value = depth / 2;
+  gate.connect(gateLp); gateLp.connect(gateG); gateG.connect(amp.gain);
+  const env = ctx.createGain();
+  const peak = 0.16 * vol * params.swellVol;
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.linearRampToValueAtTime(peak, t + attack);
+  env.gain.setValueAtTime(peak, t + hold);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+  const oscs = [];
+  chord.forEach((hz, k) => {
+    for (const j of [-1, 0, 1]) {
+      const o = osc(ctx, 'sawtooth', hz, j * params.padDetune + (Math.random() - 0.5) * 4);
+      const g = ctx.createGain(); g.gain.value = k === 0 ? 0.4 : 0.28;
+      const p = panner(ctx, j * 0.55);
+      o.connect(g); g.connect(p); p.connect(lp); oscs.push(o);
+    }
+  });
+  const sub = osc(ctx, 'sine', chord[0] / 2);   // anchors the pad under the pump
+  const subG = ctx.createGain(); subG.gain.value = 0.5;
+  sub.connect(subG); subG.connect(lp); oscs.push(sub);
+  const send = ctx.createGain(); send.gain.value = 0.25;
+  lp.connect(amp); amp.connect(env); env.connect(pump); env.connect(send); send.connect(echo);
+  const stopAt = t + seconds + 0.1;
+  oscs.forEach(o => { o.start(t); o.stop(stopAt); });
+  wob.start(t); wob.stop(stopAt);
+  gate.start(t); gate.stop(stopAt);
+}
+let hoverNext = 0, landNext = 0;
+function hoverNote(ix, volMul = 1) {
+  if (!params.sound || !audio) return;
+  const now = performance.now();
+  if (now < hoverNext) return;
+  hoverNext = now + 65;
+  const u = ix / Math.max(1, state.cols - 1);
+  const step = Math.round(u * 9);  // rises left to right across the field, and pans with it
+  pluck(noteHz(step, params.hoverOctave), params.hoverVol * volMul, params.hoverDecay, (u * 2 - 1) * 0.7);
+}
+function landThump() {
+  if (!params.sound || !audio) return;
+  const now = performance.now();
+  if (now < landNext) return;
+  landNext = now + 40;
+  zap(params.landVol * 0.35, noteHz((Math.random() * 10) | 0, 1));
+}
+function splashSound(vol = 1) {
+  if (!params.sound || !audio) return;
+  const t = audio.ctx.currentTime;
+  kick(t, params.thumpVol * vol, params.thumpHz, params.thumpDecay);
+  duck(t, 0.75);
+  const seconds = Math.min(12, Math.max(0.8, (params.splashRadius / params.ringSpeed) * params.swellLength));
+  swell(vol, seconds);
+  if (params.sweepVol > 0) sweep(params.sweepVol * vol, seconds);
+}
+const soundBtn = document.getElementById('sound');
+function setSound(on) {
+  params.sound = on;
+  soundBtn.classList.toggle('on', on);
+  soundBtn.setAttribute('aria-pressed', String(on));
+  if (on) { ensureAudio().ctx.resume(); startAmbient(); } else { stopAmbient(); }
+  persist();
+}
+soundBtn.addEventListener('click', () => setSound(!params.sound));
+soundBtn.classList.toggle('on', params.sound);
+// a remembered "sound on" can only start after the first gesture (autoplay policy)
+const armSound = () => { if (params.sound && !audio) setSound(true); };
+window.addEventListener('pointerdown', armSound, { once: true });
+window.addEventListener('keydown', armSound, { once: true });
+sun.castShadow = params.shadows;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -100; sun.shadow.camera.right = 100;
+sun.shadow.camera.top = 100; sun.shadow.camera.bottom = -100;
+sun.shadow.camera.near = 10; sun.shadow.camera.far = 260;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+// ---------- die geometry (rounded box + vertex-colored pips, merged once) ----------
+function paint(geo, color) {
+  const n = geo.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = color.r; arr[i * 3 + 1] = color.g; arr[i * 3 + 2] = color.b; }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+function buildDie() {
+  const white = new THREE.Color(0xffffff);
+  const pip = new THREE.Color(0x17171d);
+  const ace = new THREE.Color(params.redAce ? 0xc73535 : 0x17171d);
+  const parts = [paint(new RoundedBoxGeometry(1, 1, 1, 2, params.bevel), white)];
+  const layouts = {
+    1: [[0, 0]],
+    2: [[-1, -1], [1, 1]],
+    3: [[-1, -1], [0, 0], [1, 1]],
+    4: [[-1, -1], [-1, 1], [1, -1], [1, 1]],
+    5: [[-1, -1], [-1, 1], [0, 0], [1, -1], [1, 1]],
+    6: [[-1, -1], [-1, 0], [-1, 1], [1, -1], [1, 0], [1, 1]],
+  };
+  // rotating about +X from rest: top face cycles 1 -> 2 -> 6 -> 5, so both
+  // "light" (1 up) and "dark" (6 up) are reachable on the shared axis
+  const faces = [
+    { n: new THREE.Vector3(0, 1, 0), count: 1 },
+    { n: new THREE.Vector3(0, -1, 0), count: 6 },
+    { n: new THREE.Vector3(0, 0, 1), count: 2 },
+    { n: new THREE.Vector3(0, 0, -1), count: 5 },
+    { n: new THREE.Vector3(1, 0, 0), count: 3 },
+    { n: new THREE.Vector3(-1, 0, 0), count: 4 },
+  ];
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  const PIP_R = 0.078, PIP_OFF = 0.205, EPS = 0.004;
+  for (const f of faces) {
+    const q = new THREE.Quaternion().setFromUnitVectors(zAxis, f.n);
+    const tan = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const bit = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    for (const [u, v] of layouts[f.count]) {
+      const c = new THREE.CircleGeometry(PIP_R, 10);
+      paint(c, f.count === 1 ? ace : pip);
+      const m = new THREE.Matrix4().makeRotationFromQuaternion(q);
+      const pos = f.n.clone().multiplyScalar(0.5 + EPS)
+        .addScaledVector(tan, u * PIP_OFF)
+        .addScaledVector(bit, v * PIP_OFF);
+      m.setPosition(pos);
+      c.applyMatrix4(m);
+      parts.push(c);
+    }
+  }
+  return BufferGeometryUtils.mergeGeometries(parts.map(g => g.index ? g.toNonIndexed() : g));
+}
+
+// glossy plastic dice: clearcoat catches the studio env like real acrylic
+const dieMat = new THREE.MeshPhysicalMaterial({
+  vertexColors: true, roughness: params.roughness, metalness: params.metalness,
+  clearcoat: params.clearcoat, clearcoatRoughness: params.clearcoatRough,
+  envMapIntensity: params.envIntensity,
+});
+// per-instance neon glow on the pips only (dark vertices), driven by spin energy
+dieMat.onBeforeCompile = (shader) => {
+  shader.uniforms.glowStrength = { value: params.glowStrength };
+  shader.uniforms.glowA = { value: new THREE.Color(params.glowColorA) };
+  shader.uniforms.glowB = { value: new THREE.Color(params.glowColorB) };
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aGlow;\nattribute float aHue;\nvarying float vGlow;\nvarying float vHue;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;\nvHue = aHue;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying float vGlow;\nvarying float vHue;\nuniform float glowStrength;\nuniform vec3 glowA;\nuniform vec3 glowB;')
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      float pipLum = (vColor.r + vColor.g + vColor.b) / 3.0;
+      float pipMask = 1.0 - smoothstep(0.35, 0.75, pipLum);
+      vec3 neon = mix(glowA, glowB, vHue);
+      diffuseColor.rgb = mix(diffuseColor.rgb, neon * 0.35, pipMask * vGlow);`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance += neon * pipMask * vGlow * glowStrength;`);
+  dieMat.userData.shader = shader;
+};
+dieMat.color.set(params.diceColor);
+
+// ---------- field state (rebuilt when the grid changes) ----------
+const ROT_AXIS = new THREE.Vector3(1, 0, 0); // pure X so quarter turns land faces flat
+const state = {
+  cols: 0, rows: 0, W: 0, D: 0, count: 0,
+  dice: null, field: null, fieldPos: null,
+  xs: null, zs: null,
+  heights: null, theta: null, omega: null, activated: null, targets: null,
+  yOffset: null, yVel: null, glowAttr: null,
+  dropAt: null, dropped: null, falling: null,
+};
+const initRand = mulberry32(42);
+
+function rebuild() {
+  if (state.dice) {
+    scene.remove(state.dice); state.dice.geometry.dispose(); state.dice.dispose();
+    scene.remove(state.field); state.field.geometry.dispose(); state.field.material.dispose();
+  }
+  state.cols = Math.round(params.cols);
+  state.rows = Math.round(params.rows);
+  state.count = state.cols * state.rows;
+  state.W = (state.cols - 1) * params.spacing;
+  state.D = (state.rows - 1) * params.spacing;
+
+  state.xs = new Float32Array(state.cols);
+  state.zs = new Float32Array(state.rows);
+  for (let ix = 0; ix < state.cols; ix++) state.xs[ix] = -state.W / 2 + ix * params.spacing;
+  for (let iz = 0; iz < state.rows; iz++) state.zs[iz] = -state.D / 2 + iz * params.spacing;
+
+  state.heights = new Float32Array(state.count);
+  state.theta = new Float32Array(state.count);
+  state.omega = new Float32Array(state.count);
+  state.activated = new Uint8Array(state.count);
+  state.yOffset = new Float32Array(state.count);
+  state.yVel = new Float32Array(state.count);
+  state.dropAt = new Float32Array(state.count);
+  state.dropped = new Uint8Array(state.count);
+  state.falling = new Uint8Array(state.count);
+  for (let i = 0; i < state.count; i++) state.theta[i] = ((initRand() * 4) | 0) * HALF_PI;
+  splashes.length = 0;
+
+  const dieGeo = buildDie();
+  state.glowAttr = new THREE.InstancedBufferAttribute(new Float32Array(state.count), 1);
+  dieGeo.setAttribute('aGlow', state.glowAttr);
+  const hueArr = new Float32Array(state.count);
+  for (let i = 0; i < state.count; i++) hueArr[i] = initRand();
+  dieGeo.setAttribute('aHue', new THREE.InstancedBufferAttribute(hueArr, 1));
+  state.dice = new THREE.InstancedMesh(dieGeo, dieMat, state.count);
+  state.dice.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  state.dice.castShadow = true;
+  state.dice.receiveShadow = true;
+  state.dice.frustumCulled = false;
+  scene.add(state.dice);
+
+  const fieldGeo = new THREE.PlaneGeometry(state.W, state.D, state.cols - 1, state.rows - 1);
+  fieldGeo.rotateX(-Math.PI / 2);
+  fieldGeo.computeBoundingSphere();
+  fieldGeo.boundingSphere.radius += params.waveAmp * 4 + 40;
+  state.field = new THREE.Mesh(fieldGeo, new THREE.MeshBasicMaterial({ visible: false }));
+  state.field.frustumCulled = false;
+  scene.add(state.field);
+  state.fieldPos = fieldGeo.attributes.position;
+
+  computeTargets();
+  startIntro();
+  lastIdx = -1;
+}
+
+// ---------- entrance: dice rain in from above, center-out with scatter ----------
+let introStart = 0, introEnd = 0;
+function startIntro() {
+  const { cols, rows, count, xs, zs, dropAt, dropped, falling, yOffset, yVel } = state;
+  introStart = performance.now();
+  if (!params.intro) { dropped.fill(1); falling.fill(0); yOffset.fill(0); yVel.fill(0); introEnd = introStart; return; }
+  const maxD = Math.hypot(state.W / 2, state.D / 2);
+  for (let i = 0; i < count; i++) {
+    const ix = i % cols, iz = (i / cols) | 0;
+    const d = Math.hypot(xs[ix], zs[iz]) / maxD;
+    dropAt[i] = params.introSpread * (0.4 * d + 0.6 * initRand());
+    dropped[i] = 0; falling[i] = 0;
+    yOffset[i] = params.introHeight; yVel[i] = 0;
+  }
+  introEnd = introStart + (params.introSpread + 1.5) * 1000;
+}
+
+// ---------- idle: the sea plays by itself when nobody is touching it ----------
+let lastInput = performance.now(), nextIdle = 0;
+const noteInput = () => { lastInput = performance.now(); };
+for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) window.addEventListener(ev, noteInput, { passive: true });
+let idleLastIdx = -1;
+function idleWander(now) {
+  const idle = params.idle && params.idleCursor && now >= introEnd && now - lastInput >= params.idleAfter * 1000;
+  if (!idle) { idleLastIdx = -1; return; }
+  const tt = (now / 1000) * params.idleCursorSpeed;
+  const x = noise2(tt, 3.7) * state.W * 0.45;
+  const z = noise2(tt + 11.1, 9.2) * state.D * 0.45;
+  const ix = Math.max(0, Math.min(state.cols - 1, Math.round((x + state.W / 2) / params.spacing)));
+  const iz = Math.max(0, Math.min(state.rows - 1, Math.round((z + state.D / 2) / params.spacing)));
+  const idx = iz * state.cols + ix;
+  if (idx !== idleLastIdx) { pulse(idx, params.idleCursorStrength); idleLastIdx = idx; hoverNote(ix, 0.7); }
+}
+function maybeIdleSplash(now) {
+  if (!params.idle || now < introEnd || now - lastInput < params.idleAfter * 1000 || now < nextIdle) return;
+  const x = (initRand() - 0.5) * state.W * 0.7;
+  const z = (initRand() - 0.5) * state.D * 0.7;
+  splashes.push({ x, z, t0: now, lastR: 0, k: params.idleStrength });
+  splashSound(0.5 * params.idleStrength);
+  nextIdle = now + params.idleEvery * (0.6 + initRand() * 0.8) * 1000;
+}
+
+// ---------- phrase -> per-die target faces (classic dice art) ----------
+function computeTargets() {
+  const { cols, rows } = state;
+  state.targets = new Uint8Array(state.count);
+  const words = params.phrase.trim().toUpperCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return;
+  const c = document.createElement('canvas');
+  c.width = cols; c.height = rows;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cols, rows);
+  ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const maxW = cols * 0.94;
+  let px = Math.max(5, Math.round(params.textRows));
+  let lines = [];
+  while (px >= 5) {
+    ctx.font = `900 ${px}px "Arial Black", Arial, sans-serif`;
+    lines = [];
+    let cur = '';
+    for (const w of words) {
+      const test = cur ? cur + ' ' + w : w;
+      if (ctx.measureText(test).width <= maxW) cur = test;
+      else { if (cur) lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    const fitsW = lines.every(l => ctx.measureText(l).width <= maxW);
+    const fitsH = lines.length * px * 1.12 <= rows * 0.62;
+    if (fitsW && fitsH) break;
+    px--;
+  }
+  const lineH = px * 1.12;
+  const centerY = rows * params.textPos;
+  const top = centerY - (lines.length * lineH) / 2;
+  lines.forEach((l, k) => ctx.fillText(l, cols / 2, top + lineH * (k + 0.5)));
+  const img = ctx.getImageData(0, 0, cols, rows).data;
+  for (let i = 0; i < state.count; i++) state.targets[i] = img[i * 4] < 128 ? 1 : 0;
+}
+
+// ---------- cursor ripple ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let pointerLive = false;
+let pointerButtons = 0;
+let lastIdx = -1;
+
+window.addEventListener('pointermove', (e) => {
+  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  pointerLive = true;
+  pointerButtons = e.buttons;
+});
+window.addEventListener('pointerleave', () => { pointerLive = false; lastIdx = -1; });
+window.addEventListener('blur', () => { pointerLive = false; lastIdx = -1; });
+
+// click (not drag) = big splash: an expanding ring of height + spin
+const splashes = [];
+let downX = 0, downY = 0, downT = 0;
+window.addEventListener('pointerdown', (e) => {
+  if (e.button === 0) { downX = e.clientX; downY = e.clientY; downT = performance.now(); }
+});
+window.addEventListener('pointerup', (e) => {
+  if (e.button !== 0) return;
+  if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
+  if (performance.now() - downT > 350) return;
+  if (e.target.closest && e.target.closest('button')) return;
+  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(state.field, false)[0];
+  if (hit) {
+    splashes.push({ x: hit.point.x, z: hit.point.z, t0: performance.now(), lastR: 0, k: 1 });
+    splashSound(1);
+  }
+});
+
+function pulse(j, k = 1) {
+  const { cols, rows } = state;
+  const jx = j % cols, jz = (j / cols) | 0;
+  const cell = Math.ceil(params.pulseRadius / params.spacing);
+  for (let dz = -cell; dz <= cell; dz++) {
+    const iz = jz + dz;
+    if (iz < 0 || iz >= rows) continue;
+    for (let dx = -cell; dx <= cell; dx++) {
+      const ix = jx + dx;
+      if (ix < 0 || ix >= cols) continue;
+      const d = params.spacing * Math.hypot(dx, dz);
+      if (d > params.pulseRadius) continue;
+      const fall = 1 - d / params.pulseRadius;
+      const idx = iz * cols + ix;
+      state.omega[idx] += params.pulseStrength * fall * fall * k;
+      if (fall >= params.activateAt) state.activated[idx] = 1;
+    }
+  }
+}
+
+function pickDie() {
+  if (!pointerLive || pointerButtons !== 0) return;
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(state.field, false)[0];
+  if (!hit) { lastIdx = -1; return; }
+  const { cols, rows } = state;
+  const ix = Math.round((hit.point.x + state.W / 2) / params.spacing);
+  const iz = Math.round((hit.point.z + state.D / 2) / params.spacing);
+  if (ix < 0 || ix >= cols || iz < 0 || iz >= rows) { lastIdx = -1; return; }
+  if (Math.abs(hit.point.x - state.xs[ix]) > params.spacing * 0.55 ||
+      Math.abs(hit.point.z - state.zs[iz]) > params.spacing * 0.55) { lastIdx = -1; return; }
+  const idx = iz * cols + ix;
+  if (idx !== lastIdx) { pulse(idx); lastIdx = idx; hoverNote(ix); }
+}
+
+function applyBg() {
+  scene.background.set(params.bgColor);
+  scene.fog.color.set(params.bgColor);
+  document.body.style.background = params.bgColor;
+  const c = new THREE.Color(params.bgColor);
+  const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  const root = document.documentElement.style;
+  root.setProperty('--bg', params.bgColor);
+  if (lum < 0.45) {
+    root.setProperty('--ink', '#f2f2f5');
+    root.setProperty('--muted', '#9a9aa6');
+    root.setProperty('--hairline', 'rgba(242,242,245,0.22)');
+  } else {
+    root.setProperty('--ink', '#17171d');
+    root.setProperty('--muted', '#7d7d88');
+    root.setProperty('--hairline', 'rgba(23,23,29,0.14)');
+  }
+}
+applyBg();
+
+// ---------- freeze toggle ----------
+let frozen = false;
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !/INPUT|TEXTAREA/.test(e.target.tagName)) {
+    e.preventDefault();
+    frozen = !frozen;
+  }
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- main loop ----------
+rebuild();
+
+const tmpMat = new THREE.Matrix4();
+const tmpQuat = new THREE.Quaternion();
+const tmpPos = new THREE.Vector3();
+const ONE = new THREE.Vector3(1, 1, 1);
+const waveSpeedScale = reducedMotion ? 0.12 : 1;
+
+let last = performance.now();
+let t = 0;
+let firstFrame = true;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+  if (!frozen) t += dt * params.waveSpeed * waveSpeedScale;
+
+  const { cols, rows, count, xs, zs, heights, theta, omega, activated, targets, fieldPos } = state;
+  const f = params.waveScale, amp = params.waveAmp;
+  const zFront = state.D / 2, invR = 1 / params.horizonR;
+
+  // heights: flowing noise + spherical drop toward the horizon
+  for (let iz = 0; iz < rows; iz++) {
+    const z = zs[iz];
+    const dzf = z - zFront;
+    for (let ix = 0; ix < cols; ix++) {
+      const x = xs[ix];
+      const wave = amp * (
+        0.75 * noise2(x * f + t, z * f + t * 0.35) +
+        0.25 * noise2(x * f * 2.6 - t * 0.6, z * f * 2.6)
+      );
+      const h = wave - (x * x + dzf * dzf) * invR;
+      const i = iz * cols + ix;
+      heights[i] = h;
+      fieldPos.array[i * 3 + 1] = h;
+    }
+  }
+  fieldPos.needsUpdate = true;
+
+  pickDie();
+  maybeIdleSplash(now);
+  idleWander(now);
+
+  // click splashes: the ring front kicks each die exactly once as it passes
+  for (let si = splashes.length - 1; si >= 0; si--) {
+    const s = splashes[si];
+    const r = ((now - s.t0) / 1000) * params.ringSpeed;
+    for (let i = 0; i < count; i++) {
+      const ix = i % cols, iz = (i / cols) | 0;
+      const d = Math.hypot(xs[ix] - s.x, zs[iz] - s.z);
+      if (d <= s.lastR || d > r || d > params.splashRadius) continue;
+      const fall = 1 - d / params.splashRadius;
+      state.yVel[i] += params.splashHeight * fall * s.k;
+      omega[i] += params.splashSpin * fall * s.k;
+      if (fall >= params.activateAt) activated[i] = 1;
+    }
+    s.lastR = r;
+    if (r > params.splashRadius) splashes.splice(si, 1);
+  }
+
+  // activated dice settle onto their phrase face (1 = light ground, 6 = dark stroke);
+  // untouched dice settle onto whatever quarter turn is nearest
+  const K = params.springK, C = params.springC;
+  const { dropAt, dropped, falling } = state;
+  const introT = (now - introStart) / 1000;
+  for (let i = 0; i < count; i++) {
+    if (!dropped[i]) {
+      if (introT < dropAt[i]) { tmpMat.makeScale(0, 0, 0); state.dice.setMatrixAt(i, tmpMat); continue; }
+      dropped[i] = 1; falling[i] = 1;
+      state.yVel[i] = -6;
+      omega[i] += (initRand() - 0.5) * 14;
+    }
+    let rest;
+    if (activated[i]) {
+      const t0 = targets[i] ? Math.PI : 0;
+      rest = t0 + Math.round((theta[i] - t0) / TWO_PI) * TWO_PI;
+    } else {
+      rest = Math.round(theta[i] / HALF_PI) * HALF_PI;
+    }
+    omega[i] += (-K * (theta[i] - rest) - C * omega[i]) * dt;
+    theta[i] += omega[i] * dt;
+    if (falling[i]) {
+      // free fall until the die meets the surface, then a damped landing
+      state.yVel[i] -= 70 * dt;
+      state.yOffset[i] += state.yVel[i] * dt;
+      if (state.yOffset[i] <= 0) {
+        state.yOffset[i] = 0; state.yVel[i] *= -0.25; falling[i] = 0;
+        landThump();
+      }
+    } else {
+      // vertical bounce spring (splash energy settles back to the wave surface)
+      state.yVel[i] += (-14 * state.yOffset[i] - 2.4 * state.yVel[i]) * dt;
+      state.yOffset[i] += state.yVel[i] * dt;
+    }
+    const ix = i % cols, iz = (i / cols) | 0;
+    tmpPos.set(xs[ix], heights[i] + state.yOffset[i], zs[iz]);
+    tmpQuat.setFromAxisAngle(ROT_AXIS, theta[i]);
+    tmpMat.compose(tmpPos, tmpQuat, ONE);
+    state.dice.setMatrixAt(i, tmpMat);
+    // pips glow with spin energy: quick to ignite, slow to fade back
+    const g = state.glowAttr.array;
+    const gTarget = Math.min(1, Math.abs(omega[i]) * params.glowSense);
+    g[i] += (gTarget - g[i]) * Math.min(1, dt * (gTarget > g[i] ? 10 : params.glowFade));
+  }
+  state.dice.instanceMatrix.needsUpdate = true;
+  state.glowAttr.needsUpdate = true;
+
+  controls.update();
+  if (params.postFx) composer.render(); else renderer.render(scene, camera);
+
+  if (firstFrame) {
+    firstFrame = false;
+    document.getElementById('loading').classList.add('done');
+  }
+}
+animate();
+</script>
+
+</body>
+</html>
