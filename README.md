@@ -8,8 +8,8 @@ An interactive field of dice rolling on a wave of probability. Move the cursor a
 
 ## Controls
 
-Move the cursor
-Click 
+Move the cursor, 
+Click, 
 Speaker button : Sound on / off 
 
 Leave it alone for a few seconds and it plays by itself.
