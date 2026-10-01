@@ -115,10 +115,10 @@ const DEFAULTS = {
   spacing: 1.2,
   bevel: 0.18,
   redAce: false,
-  waveSpeed: 0.11,
-  waveAmp: 7,
-  waveScale: 0.018,
-  horizonR: 1010,        // smaller = stronger curve toward the horizon
+  waveSpeed: 0.2,
+  waveAmp: 5,
+  waveScale: 0.02,
+  horizonR: 2000,        // smaller = stronger curve toward the horizon
   pulseRadius: 8,
   pulseStrength: 6,
   springK: 5,
@@ -139,47 +139,47 @@ const DEFAULTS = {
   bgColor: '#242424',
   diceColor: '#000000',
   sunIntensity: 4,
-  sunColor: '#ffffff',
+  sunColor: '#ff00a2',
   sunAzimuth: 197,
   sunElevation: 34,
   hemiIntensity: 2,
   envIntensity: 2,
-  exposure: 0.52,
+  exposure: 0.78,
   roughness: 0.71,
   metalness: 1,
   clearcoat: 0.09,
   clearcoatRough: 0.29,
   lockCamera: true,
   intro: true,           // dice rain in on load
-  introHeight: 35,
-  introSpread: 2.5,      // seconds over which the dice arrive
+  introHeight: 80,
+  introSpread: 5,      // seconds over which the dice arrive
   idle: true,            // autonomous splashes when nobody is interacting
   idleAfter: 4,
   idleEvery: 4,
   idleStrength: 0.6,
   postFx: true,
   bloom: true,
-  bloomStrength: 0.6,
-  bloomThreshold: 1,
-  bloomRadius: 0.4,
-  vignette: 0.45,
+  bloomStrength: 2.05,
+  bloomThreshold: 0.5,
+  bloomRadius: 0.2,
+  vignette: 1,
   sound: true,           // remembered preference; still needs a first click (autoplay policy)
   soundVolume: 1,
   sndRoot: 'D',
   sndScale: 'natural minor',
-  bpm: 99,              // the echo and the pad gate lock to this
-  hoverVol: 0.17, hoverOctave: 2, hoverDecay: 0.5, pluckBright: 20, pluckReso: 2,
-  thumpVol: 1.5, thumpHz: 32, thumpDecay: 1.1, sweepVol: 0.095,
+  bpm: 119,              // the echo and the pad gate lock to this
+  hoverVol: 0.17, hoverOctave: 2, hoverDecay: 2, pluckBright: 3, pluckReso: 3,
+  thumpVol: 1.5, thumpHz: 30, thumpDecay: 1.5, sweepVol: 0.2,
   swellVol: 1.25, swellAttack: 1.5, swellChord: 'diatonic 7th', swellCutoff: 4070, padReso: 4.5, padDetune: 12,
-  gateDiv: '1/16', gateDepth: 0.15, wobbleRate: 0.1, wobbleDepth: 110, swellLength: 0.75,
+  gateDiv: '1/16', gateDepth: 0.15, wobbleRate: 0.1, wobbleDepth: 110, swellLength: 1.05,
   landVol: 0.26,
   ambientVol: 0.07, ambientCutoff: 240,
-  warmth: 0.85,          // tanh drive on the whole mix
-  reverbMix: 0.4,       // neon-hall reverb send
+  warmth: 1,          // tanh drive on the whole mix
+  reverbMix: 0.3,       // neon-hall reverb send
   reverbDecay: 2.3,        // seconds
   echoMix: 0.28,         // dotted-eighth ping-pong echo on plucks and pads
-  echoFeedback: 0.69,
-  ambientTexture: 0.017, // faint bandpassed static over the drone
+  echoFeedback: 0.49,
+  ambientTexture: 0.01, // faint bandpassed static over the drone
   idleCursor: true,      // a virtual cursor wanders the field while idle
   idleCursorSpeed: 0.12,
   idleCursorStrength: 0.7,
